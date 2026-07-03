@@ -28,7 +28,7 @@ public sealed class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var canListenTask = Task.CompletedTask;
+        Task canListenTask = Task.CompletedTask;
         CanIsoTpListener? canListener = null;
 
         try
@@ -40,6 +40,12 @@ public sealed class Worker : BackgroundService
             canListener = new CanIsoTpListener(canInterface, canRxId, canTxId, _logger);
             canListener.Open();
             canListenTask = canListener.ListenAsync(stoppingToken);
+
+            _logger.LogInformation(
+                "CAN ISO-TP listener started on {Interface} rx=0x{RxId:X} tx=0x{TxId:X}",
+                canInterface,
+                canRxId,
+                canTxId);
         }
         catch (Exception ex)
         {
@@ -54,7 +60,7 @@ public sealed class Worker : BackgroundService
             var topic = e.ApplicationMessage.Topic;
             var payload = Encoding.UTF8.GetString(e.ApplicationMessage.Payload);
 
-            _logger.LogInformation("RX Topic={Topic} Payload={Payload}", topic, payload);
+            _logger.LogInformation("MQTT RX Topic={Topic} Payload={Payload}", topic, payload);
 
             try
             {
@@ -77,8 +83,7 @@ public sealed class Worker : BackgroundService
                     "unknown",
                     false,
                     ex.Message,
-                    stoppingToken
-                );
+                    stoppingToken);
             }
         };
 
@@ -87,29 +92,62 @@ public sealed class Worker : BackgroundService
             .WithClientId($"orchestrator-{NodeId}")
             .Build();
 
-
-        await client.ConnectAsync(options, stoppingToken);
-
-        _logger.LogInformation("MQTT Connected");
-        _logger.LogInformation("This is the new version CAN");
-
-        await client.SubscribeAsync($"tronloop/node/{NodeId}/cmd", cancellationToken: stoppingToken);
-        await client.SubscribeAsync("tronloop/broadcast/cmd", cancellationToken: stoppingToken);
-
-        await PublishStatus(client, "online", stoppingToken);
-        await canListenTask;
-        canListener?.Dispose();
-
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            await PublishHeartbeat(client, stoppingToken);
-            await Task.Delay(5000, stoppingToken);
+            await client.ConnectAsync(options, stoppingToken);
+
+            _logger.LogInformation("MQTT Connected");
+            _logger.LogInformation("This is the new version CAN");
+
+            await client.SubscribeAsync($"tronloop/node/{NodeId}/cmd", cancellationToken: stoppingToken);
+            await client.SubscribeAsync("tronloop/broadcast/cmd", cancellationToken: stoppingToken);
+
+            await PublishStatus(client, "online", stoppingToken);
+
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                await PublishHeartbeat(client, stoppingToken);
+                await Task.Delay(5000, stoppingToken);
+            }
         }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("Worker stopping");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Worker failed");
+        }
+        finally
+        {
+            try
+            {
+                if (client.IsConnected)
+                {
+                    await PublishStatus(client, "offline", CancellationToken.None);
+                    await client.DisconnectAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed while disconnecting MQTT client");
+            }
 
-        await PublishStatus(client, "offline", CancellationToken.None);
-        await client.DisconnectAsync();
+            canListener?.Dispose();
 
-      
+            try
+            {
+                await canListenTask;
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal shutdown
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "CAN listener stopped with error");
+            }
+        }
     }
 
     private static uint ParseCanId(string? value)
@@ -120,6 +158,7 @@ public sealed class Worker : BackgroundService
         }
 
         var trimmed = value.Trim();
+
         return trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
             ? uint.Parse(trimmed[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture)
             : uint.Parse(trimmed, CultureInfo.InvariantCulture);
