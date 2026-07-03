@@ -65,10 +65,11 @@ public sealed class Worker : BackgroundService
             .WithClientId($"orchestrator-{NodeId}")
             .Build();
 
+
         await client.ConnectAsync(options, stoppingToken);
 
         _logger.LogInformation("MQTT Connected");
-        _logger.LogInformation("This is the new version");
+        _logger.LogInformation("This is the new version 2");
 
         await client.SubscribeAsync($"tronloop/node/{NodeId}/cmd", cancellationToken: stoppingToken);
         await client.SubscribeAsync("tronloop/broadcast/cmd", cancellationToken: stoppingToken);
