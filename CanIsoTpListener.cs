@@ -16,6 +16,7 @@ public sealed class CanIsoTpListener : IDisposable
     private const int SO_RCVTIMEO = 20;
     private const int EAGAIN = 11;
     private const int EWOULDBLOCK = 11;
+    private const int ETIMEDOUT = 110;
 
     private readonly string _interfaceName;
     private readonly uint _rxId;
@@ -97,7 +98,7 @@ public sealed class CanIsoTpListener : IDisposable
                 else if (bytesRead < 0)
                 {
                     var errno = Marshal.GetLastWin32Error();
-                    if (errno is EAGAIN or EWOULDBLOCK)
+                    if (errno is EAGAIN or EWOULDBLOCK or ETIMEDOUT)
                     {
                         continue; // recv timeout, loop back to re-check cancellation
                     }
