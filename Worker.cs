@@ -68,6 +68,7 @@ public sealed class Worker : BackgroundService
         await client.ConnectAsync(options, stoppingToken);
 
         _logger.LogInformation("MQTT Connected");
+        _logger.LogInformation("This is the new version");
 
         await client.SubscribeAsync($"tronloop/node/{NodeId}/cmd", cancellationToken: stoppingToken);
         await client.SubscribeAsync("tronloop/broadcast/cmd", cancellationToken: stoppingToken);
