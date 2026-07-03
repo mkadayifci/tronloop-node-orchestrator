@@ -97,6 +97,8 @@ public sealed class Worker : BackgroundService
         await client.SubscribeAsync("tronloop/broadcast/cmd", cancellationToken: stoppingToken);
 
         await PublishStatus(client, "online", stoppingToken);
+        await canListenTask;
+        canListener?.Dispose();
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -107,8 +109,7 @@ public sealed class Worker : BackgroundService
         await PublishStatus(client, "offline", CancellationToken.None);
         await client.DisconnectAsync();
 
-        await canListenTask;
-        canListener?.Dispose();
+      
     }
 
     private static uint ParseCanId(string? value)
