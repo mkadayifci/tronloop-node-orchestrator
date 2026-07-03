@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MQTTnet;
@@ -9,6 +11,7 @@ namespace Tronloop.NodeOrchestrator;
 public sealed class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
+    private readonly IConfiguration _configuration;
 
     private const string NodeId = "A0";
 
@@ -17,13 +20,32 @@ public sealed class Worker : BackgroundService
         PropertyNameCaseInsensitive = true
     };
 
-    public Worker(ILogger<Worker> logger)
+    public Worker(ILogger<Worker> logger, IConfiguration configuration)
     {
         _logger = logger;
+        _configuration = configuration;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var canListenTask = Task.CompletedTask;
+        CanIsoTpListener? canListener = null;
+
+        try
+        {
+            var canInterface = _configuration["Can:Interface"] ?? "can0";
+            var canRxId = ParseCanId(_configuration["Can:RxId"]);
+            var canTxId = ParseCanId(_configuration["Can:TxId"]);
+
+            canListener = new CanIsoTpListener(canInterface, canRxId, canTxId, _logger);
+            canListener.Open();
+            canListenTask = canListener.ListenAsync(stoppingToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to start CAN ISO-TP listener");
+        }
+
         var factory = new MqttClientFactory();
         var client = factory.CreateMqttClient();
 
@@ -69,7 +91,7 @@ public sealed class Worker : BackgroundService
         await client.ConnectAsync(options, stoppingToken);
 
         _logger.LogInformation("MQTT Connected");
-        _logger.LogInformation("This is the new version 5");
+        _logger.LogInformation("This is the new version CAN");
 
         await client.SubscribeAsync($"tronloop/node/{NodeId}/cmd", cancellationToken: stoppingToken);
         await client.SubscribeAsync("tronloop/broadcast/cmd", cancellationToken: stoppingToken);
@@ -84,6 +106,22 @@ public sealed class Worker : BackgroundService
 
         await PublishStatus(client, "offline", CancellationToken.None);
         await client.DisconnectAsync();
+
+        await canListenTask;
+        canListener?.Dispose();
+    }
+
+    private static uint ParseCanId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return 0;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+            ? uint.Parse(trimmed[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture)
+            : uint.Parse(trimmed, CultureInfo.InvariantCulture);
     }
 
     private async Task HandleCommand(
