@@ -168,7 +168,7 @@ public sealed class Worker : BackgroundService
     private async Task SendDummyCanMessagesAsync(CanIsoTpListener canListener, CancellationToken cancellationToken)
     {
         uint counter = 0;
-
+        _logger.LogWarning("Trying to send dummy ISO-TP message");
         while (!cancellationToken.IsCancellationRequested)
         {
             var payload = new byte[12];
