@@ -28,30 +28,43 @@ public sealed class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        Task canListenTask = Task.CompletedTask;
-        Task canSendTask = Task.CompletedTask;
-        CanIsoTpListener? canListener = null;
+        List<CanIsoTpListener> canListeners = [];
+        List<Task> canTasks = [];
 
-        try
+        var canInterface = _configuration["Can:Interface"] ?? "can0";
+        var canRxIds = ParseCanIdList(_configuration["Can:RxIds"]);
+        var canTxIds = ParseCanIdList(_configuration["Can:TxIds"]);
+
+        if (canRxIds.Count != canTxIds.Count)
         {
-            var canInterface = _configuration["Can:Interface"] ?? "can0";
-            var canRxId = ParseCanId(_configuration["Can:RxId"]);
-            var canTxId = ParseCanId(_configuration["Can:TxId"]);
-
-            canListener = new CanIsoTpListener(canInterface, canRxId, canTxId, _logger);
-            canListener.Open();
-            canListenTask = canListener.ListenAsync(stoppingToken);
-            canSendTask = SendDummyCanMessagesAsync(canListener, stoppingToken);
-
-            _logger.LogInformation(
-                "CAN ISO-TP listener started on {Interface} rx=0x{RxId:X} tx=0x{TxId:X}",
-                canInterface,
-                canRxId,
-                canTxId);
+            _logger.LogError(
+                "Can:RxIds ({RxCount} entries) and Can:TxIds ({TxCount} entries) must have the same number of comma-separated entries; no CAN listeners started.",
+                canRxIds.Count,
+                canTxIds.Count);
         }
-        catch (Exception ex)
+        else
         {
-            _logger.LogError(ex, "Failed to start CAN ISO-TP listener");
+            for (var i = 0; i < canRxIds.Count; i++)
+            {
+                var rxId = canRxIds[i];
+                var txId = canTxIds[i];
+                var deviceLabel = $"{canInterface} rx=0x{rxId:X} tx=0x{txId:X}";
+
+                try
+                {
+                    var canListener = new CanIsoTpListener(canInterface, rxId, txId, _logger);
+                    canListener.Open();
+                    canListeners.Add(canListener);
+                    canTasks.Add(canListener.ListenAsync(stoppingToken));
+                    canTasks.Add(SendDummyCanMessagesAsync(canListener, deviceLabel, stoppingToken));
+
+                    _logger.LogInformation("CAN ISO-TP listener started on {Device}", deviceLabel);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to start CAN ISO-TP listener on {Device}", deviceLabel);
+                }
+            }
         }
 
         var factory = new MqttClientFactory();
@@ -135,40 +148,34 @@ public sealed class Worker : BackgroundService
                 _logger.LogWarning(ex, "Failed while disconnecting MQTT client");
             }
 
-            canListener?.Dispose();
-
-            try
+            foreach (var canListener in canListeners)
             {
-                await canListenTask;
-            }
-            catch (OperationCanceledException)
-            {
-                // Normal shutdown
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "CAN listener stopped with error");
+                canListener.Dispose();
             }
 
-            try
+            foreach (var canTask in canTasks)
             {
-                await canSendTask;
-            }
-            catch (OperationCanceledException)
-            {
-                // Normal shutdown
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "CAN sender stopped with error");
+                try
+                {
+                    await canTask;
+                }
+                catch (OperationCanceledException)
+                {
+                    // Normal shutdown
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "CAN task stopped with error");
+                }
             }
         }
     }
 
-    private async Task SendDummyCanMessagesAsync(CanIsoTpListener canListener, CancellationToken cancellationToken)
+    private async Task SendDummyCanMessagesAsync(CanIsoTpListener canListener, string deviceLabel, CancellationToken cancellationToken)
     {
         uint counter = 0;
-        _logger.LogWarning("Trying to send dummy ISO-TP message");
+        _logger.LogWarning("Trying to send dummy ISO-TP message to {Device}", deviceLabel);
+
         while (!cancellationToken.IsCancellationRequested)
         {
             var payload = new byte[12];
@@ -178,15 +185,28 @@ public sealed class Worker : BackgroundService
             try
             {
                 canListener.Send(payload);
-                _logger.LogWarning("Sent dummy ISO-TP message");
+                _logger.LogWarning("Sent dummy ISO-TP message to {Device}", deviceLabel);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to send dummy ISO-TP message");
+                _logger.LogWarning(ex, "Failed to send dummy ISO-TP message to {Device}", deviceLabel);
             }
 
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }
+    }
+
+    private static List<uint> ParseCanIdList(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return [];
+        }
+
+        return value
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(ParseCanId)
+            .ToList();
     }
 
     private static uint ParseCanId(string? value)
