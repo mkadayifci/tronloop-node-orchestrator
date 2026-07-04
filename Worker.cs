@@ -29,6 +29,7 @@ public sealed class Worker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         Task canListenTask = Task.CompletedTask;
+        Task canSendTask = Task.CompletedTask;
         CanIsoTpListener? canListener = null;
 
         try
@@ -40,6 +41,7 @@ public sealed class Worker : BackgroundService
             canListener = new CanIsoTpListener(canInterface, canRxId, canTxId, _logger);
             canListener.Open();
             canListenTask = canListener.ListenAsync(stoppingToken);
+            canSendTask = SendDummyCanMessagesAsync(canListener, stoppingToken);
 
             _logger.LogInformation(
                 "CAN ISO-TP listener started on {Interface} rx=0x{RxId:X} tx=0x{TxId:X}",
@@ -147,6 +149,42 @@ public sealed class Worker : BackgroundService
             {
                 _logger.LogWarning(ex, "CAN listener stopped with error");
             }
+
+            try
+            {
+                await canSendTask;
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal shutdown
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "CAN sender stopped with error");
+            }
+        }
+    }
+
+    private async Task SendDummyCanMessagesAsync(CanIsoTpListener canListener, CancellationToken cancellationToken)
+    {
+        uint counter = 0;
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var payload = new byte[12];
+            BitConverter.GetBytes(counter).CopyTo(payload, 0);
+            counter++;
+
+            try
+            {
+                canListener.Send(payload);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send dummy ISO-TP message");
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }
     }
 

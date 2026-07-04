@@ -175,6 +175,24 @@ public sealed class CanIsoTpListener : IDisposable
         }
     }
 
+    public void Send(byte[] data)
+    {
+        EnsureOpen();
+
+        var fd = GetSocketFd();
+        var bytesWritten = write(fd, data, data.Length);
+
+        if (bytesWritten < 0)
+        {
+            throw new InvalidOperationException(
+                $"ISO-TP write failed (errno={Marshal.GetLastWin32Error()}).");
+        }
+
+        var hex = Convert.ToHexString(data, 0, (int)bytesWritten);
+        Console.WriteLine($"[ISO-TP] {DateTime.Now:HH:mm:ss.fff} -> {hex}");
+        _logger.LogInformation("ISO-TP TX [{Length} bytes]: {Hex}", bytesWritten, hex);
+    }
+
     private int GetSocketFd()
     {
         lock (_sync)
@@ -265,6 +283,9 @@ public sealed class CanIsoTpListener : IDisposable
 
     [DllImport("libc", SetLastError = true)]
     private static extern nint read(int fd, byte[] buf, nint count);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern nint write(int fd, byte[] buf, nint count);
 
     [DllImport("libc", SetLastError = true)]
     private static extern int close(int fd);
