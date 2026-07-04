@@ -210,7 +210,7 @@ public sealed class Worker : BackgroundService
         switch (command.Type)
         {
             case "start_charge":
-                _logger.LogInformation("Start charge requested");
+                _logger.LogInformation("Start charge requested ");
                 await PublishAck(client, command.Id, true, "Charge started", cancellationToken);
                 break;
 
