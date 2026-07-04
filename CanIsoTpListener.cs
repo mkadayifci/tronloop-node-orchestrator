@@ -52,57 +52,64 @@ public sealed class CanIsoTpListener : IDisposable
         }
     }
 
-    public async Task ListenAsync(CancellationToken cancellationToken)
+    public Task ListenAsync(CancellationToken cancellationToken)
     {
-        var buffer = new byte[4096];
-
-        while (!cancellationToken.IsCancellationRequested)
+        // The loop body below never hits a real "await" while reads are succeeding or timing
+        // out (it just "continue"s), so an ordinary async method would run it synchronously
+        // on the caller's thread and never return until cancellation. Task.Run moves the whole
+        // loop onto a background thread so ListenAsync itself returns immediately.
+        return Task.Run(async () =>
         {
-            try
+            var buffer = new byte[4096];
+
+            while (!cancellationToken.IsCancellationRequested)
             {
-                EnsureOpen();
-
-                var fd = GetSocketFd();
-                var bytesRead = read(fd, buffer, buffer.Length);
-
-                if (bytesRead > 0)
+                try
                 {
-                    var hex = Convert.ToHexString(buffer, 0, (int)bytesRead);
-                    Console.WriteLine($"[ISO-TP] {DateTime.Now:HH:mm:ss.fff} <- {hex}");
-                    _logger.LogInformation("ISO-TP RX [{Length} bytes]: {Hex}", bytesRead, hex);
-                    continue;
-                }
+                    EnsureOpen();
 
-                if (bytesRead < 0)
-                {
-                    var errno = Marshal.GetLastWin32Error();
+                    var fd = GetSocketFd();
+                    var bytesRead = read(fd, buffer, buffer.Length);
 
-                    if (errno is EAGAIN or EWOULDBLOCK or ETIMEDOUT)
+                    if (bytesRead > 0)
                     {
+                        var hex = Convert.ToHexString(buffer, 0, (int)bytesRead);
+                        Console.WriteLine($"[ISO-TP] {DateTime.Now:HH:mm:ss.fff} <- {hex}");
+                        _logger.LogInformation("ISO-TP RX [{Length} bytes]: {Hex}", bytesRead, hex);
                         continue;
                     }
 
-                    _logger.LogWarning("ISO-TP read error (errno={Errno}); reconnecting socket.", errno);
-
-                    CloseSocketSafely();
-
-                    if (IsFatalSocketError(errno))
+                    if (bytesRead < 0)
                     {
-                        await DelayBeforeReconnect(cancellationToken);
+                        var errno = Marshal.GetLastWin32Error();
+
+                        if (errno is EAGAIN or EWOULDBLOCK or ETIMEDOUT)
+                        {
+                            continue;
+                        }
+
+                        _logger.LogWarning("ISO-TP read error (errno={Errno}); reconnecting socket.", errno);
+
+                        CloseSocketSafely();
+
+                        if (IsFatalSocketError(errno))
+                        {
+                            await DelayBeforeReconnect(cancellationToken);
+                        }
                     }
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "ISO-TP listener failed; will retry.");
+                    CloseSocketSafely();
+                    await DelayBeforeReconnect(cancellationToken);
+                }
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "ISO-TP listener failed; will retry.");
-                CloseSocketSafely();
-                await DelayBeforeReconnect(cancellationToken);
-            }
-        }
+        }, cancellationToken);
     }
 
     private void EnsureOpen()
