@@ -76,6 +76,19 @@ public sealed class CanIsoTpListener : IDisposable
                         var hex = Convert.ToHexString(buffer, 0, (int)bytesRead);
                         Console.WriteLine($"[ISO-TP] {DateTime.Now:HH:mm:ss.fff} <- {hex}");
                         _logger.LogInformation("ISO-TP RX [{Length} bytes]: {Hex}", bytesRead, hex);
+
+                        if (bytesRead == Marshal.SizeOf<FastTelemetryPayload>())
+                        {
+                            var telemetry = MemoryMarshal.Read<FastTelemetryPayload>(buffer.AsSpan(0, (int)bytesRead));
+
+                            _logger.LogInformation(
+                                "Fast telemetry: voltage={VoltageMv} mV, current={CurrentMa} mA, temp={TempC:F1} C, state={State}",
+                                telemetry.BatteryVoltageMv,
+                                telemetry.BatteryCurrentMa,
+                                telemetry.BatteryTempDeciC / 10.0,
+                                telemetry.State);
+                        }
+
                         continue;
                     }
 
@@ -296,4 +309,13 @@ public sealed class CanIsoTpListener : IDisposable
 
     [DllImport("libc", SetLastError = true)]
     private static extern int close(int fd);
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1)]
+public readonly struct FastTelemetryPayload
+{
+    public readonly ushort BatteryVoltageMv;
+    public readonly short BatteryCurrentMa;
+    public readonly short BatteryTempDeciC;
+    public readonly byte State;
 }
