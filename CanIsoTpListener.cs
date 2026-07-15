@@ -74,8 +74,8 @@ public sealed class CanIsoTpListener : IDisposable
                     if (bytesRead > 0)
                     {
                         var hex = Convert.ToHexString(buffer, 0, (int)bytesRead);
-                        Console.WriteLine($"[ISO-TP] {DateTime.Now:HH:mm:ss.fff} <- {hex}");
-                        _logger.LogInformation("ISO-TP RX [{Length} bytes]: {Hex}", bytesRead, hex);
+                        //Console.WriteLine($"[ISO-TP] {DateTime.Now:HH:mm:ss.fff} <- {hex}");
+                        //_logger.LogInformation("ISO-TP RX [{Length} bytes]: {Hex}", bytesRead, hex);
 
                         if (bytesRead == Marshal.SizeOf<FastTelemetryPayload>())
                         {
