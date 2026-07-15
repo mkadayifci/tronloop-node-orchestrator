@@ -185,7 +185,7 @@ public sealed class Worker : BackgroundService
             try
             {
                 canListener.Send(payload);
-                _logger.LogWarning("Sent dummy ISO-TP message to {Device}", deviceLabel);
+                _logger.LogWarning("Sent dummy ISO-TP message to {Device x}", deviceLabel);
             }
             catch (Exception ex)
             {
