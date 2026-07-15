@@ -228,6 +228,7 @@ public sealed class Worker : BackgroundService
         NodeCommand command,
         CancellationToken cancellationToken)
     {
+        _logger.LogInformation("Handling command {Type} (Id: {Id}, Value: {Value})", command.Type, command.Id, command.Value);
         switch (command.Type)
         {
             case "start_charge":
